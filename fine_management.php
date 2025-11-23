@@ -841,7 +841,8 @@ if ($view_mode === 'overview') {
     $allUserFines = $result->fetch_all(MYSQLI_ASSOC);
 }
 
-// Handle payment processing
+// ==================== COPY FROM HERE ====================
+// Handle payment processing - FIXED VERSION
 if (isset($_POST['process_payment'])) {
     $selectedFines = $_POST['selected_fines'] ?? [];
     $cashReceived = floatval($_POST['cash_received'] ?? 0);
@@ -859,6 +860,8 @@ if (isset($_POST['process_payment'])) {
             $totalPaid = 0;
             $paidFines = [];
             $fineDetails = [];
+            $borrowIDsToUpdate = [];  // NEW: Track borrows that need status update
+            $bookIDsToUpdate = [];    // NEW: Track books that need status update
             
             $userId = intval($_POST['user_id'] ?? 0);
             if ($userId > 0) {
@@ -876,11 +879,13 @@ if (isset($_POST['process_payment'])) {
                 $userInfo = $result->fetch_assoc();
             }
             
+            // Process each selected fine
             foreach ($selectedFines as $fineId) {
                 $fineAmount = floatval($_POST['fine_amount_' . $fineId] ?? 0);
                 
                 if ($fineAmount > 0) {
-                    $stmt = $conn->prepare("SELECT f.*, book.bookTitle FROM fines f 
+                    $stmt = $conn->prepare("SELECT f.*, b.bookID, book.bookTitle 
+                                           FROM fines f 
                                            LEFT JOIN borrow b ON f.borrowID = b.borrowID 
                                            LEFT JOIN book ON b.bookID = book.bookID 
                                            WHERE f.fineID = ?");
@@ -892,16 +897,25 @@ if (isset($_POST['process_payment'])) {
                     if ($fine) {
                         $newAmountPaid = ($fine['amount_paid'] ?? 0) + $fineAmount;
                         $newBalance = $fine['fine_amount'] - $newAmountPaid;
-                        $paymentStatus = $newBalance <= 0.01 ? 'paid_cash' : 'unpaid';
                         
+                        // Mark as fully paid if balance is negligible (less than 1 cent)
+                        $paymentStatus = $newBalance <= 0.01 ? 'paid_cash' : 'unpaid';
+                        if ($newBalance <= 0.01) {
+                            $newBalance = 0; // Zero out small balances
+                        }
+                        
+                        // UPDATE FINES TABLE
                         $updateStmt = $conn->prepare("
                             UPDATE fines 
-                            SET amount_paid = ?, balance_due = ?, payment_status = ?, 
-                                payment_date = IF(? = 'paid_cash', NOW(), payment_date),
-                                collected_by_librarianID = ?
+                            SET amount_paid = ?, 
+                                balance_due = ?, 
+                                payment_status = ?, 
+                                payment_date = NOW(),
+                                collected_by_librarianID = ?,
+                                updated_date = NOW()
                             WHERE fineID = ?
                         ");
-                        $updateStmt->bind_param('ddssii', $newAmountPaid, $newBalance, $paymentStatus, $paymentStatus, $currentLibrarianID, $fineId);
+                        $updateStmt->bind_param('ddsii', $newAmountPaid, $newBalance, $paymentStatus, $currentLibrarianID, $fineId);
                         $updateStmt->execute();
                         
                         $totalPaid += $fineAmount;
@@ -913,10 +927,124 @@ if (isset($_POST['process_payment'])) {
                             'fine_reason' => $fine['fine_reason'],
                             'amount_paid' => $fineAmount
                         ];
+                        
+                        // **FIX #1 & #2: Track borrowIDs and bookIDs if fine is fully paid**
+                        if ($paymentStatus === 'paid_cash' && $fine['borrowID']) {
+                            $borrowIDsToUpdate[] = $fine['borrowID'];
+                            if ($fine['bookID']) {
+                                $bookIDsToUpdate[] = $fine['bookID'];
+                            }
+                        }
                     }
                 }
             }
             
+            // **FIX #1: UPDATE BORROW STATUS TO 'RETURNED' FOR PAID FINES**
+            if (!empty($borrowIDsToUpdate)) {
+                foreach ($borrowIDsToUpdate as $borrowID) {
+                    // First, set return_date if not already set
+                    $setReturnDateStmt = $conn->prepare("
+                        UPDATE borrow 
+                        SET return_date = COALESCE(return_date, CURDATE()),
+                            updated_date = NOW()
+                        WHERE borrowID = ?
+                        AND return_date IS NULL
+                    ");
+                    $setReturnDateStmt->bind_param('i', $borrowID);
+                    $setReturnDateStmt->execute();
+                    
+                    // Then update status to 'returned'
+                    $updateBorrowStmt = $conn->prepare("
+                        UPDATE borrow 
+                        SET borrow_status = 'returned',
+                            fine_amount = 0,
+                            days_overdue = 0,
+                            updated_date = NOW()
+                        WHERE borrowID = ?
+                        AND borrow_status IN ('overdue', 'borrowed')
+                    ");
+                    $updateBorrowStmt->bind_param('i', $borrowID);
+                    $updateBorrowStmt->execute();
+                }
+            }
+            
+            // **FIX #2: UPDATE BOOK STATUS TO 'AVAILABLE' FOR PAID FINES**
+            if (!empty($bookIDsToUpdate)) {
+                foreach ($bookIDsToUpdate as $bookID) {
+                    // Check if this book has any active borrows
+                    $checkBookStmt = $conn->prepare("
+                        SELECT COUNT(*) as active_borrows 
+                        FROM borrow 
+                        WHERE bookID = ? 
+                        AND borrow_status IN ('borrowed', 'overdue')
+                    ");
+                    $checkBookStmt->bind_param('i', $bookID);
+                    $checkBookStmt->execute();
+                    $bookResult = $checkBookStmt->get_result()->fetch_assoc();
+                    
+                    // Only set to 'available' if no active borrows exist
+                    if ($bookResult['active_borrows'] == 0) {
+                        // Check for reservations
+                        $resStmt = $conn->prepare("
+                            SELECT reservationID, userID 
+                            FROM reservation 
+                            WHERE bookID = ? 
+                            AND reservation_status = 'waiting' 
+                            ORDER BY queue_position ASC 
+                            LIMIT 1
+                        ");
+                        $resStmt->bind_param('i', $bookID);
+                        $resStmt->execute();
+                        $resResult = $resStmt->get_result();
+                        
+                        if ($resResult->num_rows > 0) {
+                            // Book has reservations - set to 'reserved' and notify next user
+                            $reservation = $resResult->fetch_assoc();
+                            
+                            $updateBookStmt = $conn->prepare("
+                                UPDATE book 
+                                SET bookStatus = 'reserved',
+                                    updated_date = NOW()
+                                WHERE bookID = ?
+                            ");
+                            $updateBookStmt->bind_param('i', $bookID);
+                            $updateBookStmt->execute();
+                            
+                            // Update reservation status
+                            $updateResStmt = $conn->prepare("
+                                UPDATE reservation 
+                                SET reservation_status = 'ready',
+                                    self_pickup_deadline = DATE_ADD(NOW(), INTERVAL 48 HOUR),
+                                    pickup_notification_date = NOW()
+                                WHERE reservationID = ?
+                            ");
+                            $updateResStmt->bind_param('i', $reservation['reservationID']);
+                            $updateResStmt->execute();
+                            
+                            // Send notification
+                            $notifStmt = $conn->prepare("
+                                INSERT INTO notifications (userID, notification_type, title, message, related_reservationID, priority)
+                                VALUES (?, 'reservation_ready', 'Book Ready for Pickup', 'Your reserved book is now available. Please collect within 48 hours.', ?, 'high')
+                            ");
+                            $notifStmt->bind_param('ii', $reservation['userID'], $reservation['reservationID']);
+                            $notifStmt->execute();
+                            
+                        } else {
+                            // No reservations - set to 'available'
+                            $updateBookStmt = $conn->prepare("
+                                UPDATE book 
+                                SET bookStatus = 'available',
+                                    updated_date = NOW()
+                                WHERE bookID = ?
+                            ");
+                            $updateBookStmt->bind_param('i', $bookID);
+                            $updateBookStmt->execute();
+                        }
+                    }
+                }
+            }
+            
+            // Generate receipt
             if ($totalPaid > 0 && $userInfo) {
                 $receiptNumber = 'REC-' . date('Ymd-His') . '-' . str_pad(rand(1, 999), 3, '0', STR_PAD_LEFT);
                 
@@ -940,6 +1068,7 @@ if (isset($_POST['process_payment'])) {
                 
                 $receiptID = $conn->insert_id;
                 
+                // Log activity
                 $logStmt = $conn->prepare("
                     INSERT INTO user_activity_log (userID, action, description) 
                     VALUES (?, 'fine_payment', ?)
@@ -964,7 +1093,7 @@ if (isset($_POST['process_payment'])) {
                 $conn->autocommit(TRUE);
                 $paymentSuccess = true;
                 
-                // Refresh fines data
+                // **FIX #4: Refresh fines data - ONLY SHOW UNPAID FINES**
                 $finesQuery = "
                     SELECT f.*, b.due_date, b.return_date, book.bookTitle, book.book_price, br.overdue_fine_per_day
                     FROM fines f
@@ -972,7 +1101,7 @@ if (isset($_POST['process_payment'])) {
                     LEFT JOIN book ON b.bookID = book.bookID
                     LEFT JOIN borrowing_rules br ON br.user_type = ?
                     WHERE f.userID = ? 
-                    AND (f.payment_status = 'unpaid' OR f.balance_due > 0)
+                    AND (f.payment_status = 'unpaid' OR (f.payment_status = 'partial_paid' AND f.balance_due > 0))
                     ORDER BY f.fine_date ASC
                 ";
                 
@@ -990,6 +1119,8 @@ if (isset($_POST['process_payment'])) {
         }
     }
 }
+// ==================== COPY UNTIL HERE ====================
+
 
 // Handle letter generation - FIXED
 if (isset($_POST['generate_letter'])) {
