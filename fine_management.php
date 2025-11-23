@@ -927,6 +927,24 @@ if (isset($_POST['process_payment'])) {
                             'fine_reason' => $fine['fine_reason'],
                             'amount_paid' => $fineAmount
                         ];
+
+                        if ($paymentStatus === 'paid_cash') {
+            // Update return_date if not set
+            $conn->query("UPDATE borrow SET return_date = COALESCE(return_date, CURDATE()) 
+                         WHERE borrowID = {$fine['borrowID']} AND return_date IS NULL");
+            
+            // Update borrow status to returned
+            $conn->query("UPDATE borrow SET borrow_status = 'returned', fine_amount = 0, days_overdue = 0 
+                         WHERE borrowID = {$fine['borrowID']}");
+            
+            // Update book status to available
+            $conn->query("UPDATE book bk 
+                         SET bk.bookStatus = 'available' 
+                         WHERE bk.bookID = {$fine['bookID']}
+                         AND NOT EXISTS (SELECT 1 FROM borrow b WHERE b.bookID = {$fine['bookID']} AND b.borrow_status IN ('borrowed', 'overdue'))");
+        }
+    
+
                         
                         // **FIX #1 & #2: Track borrowIDs and bookIDs if fine is fully paid**
                         if ($paymentStatus === 'paid_cash' && $fine['borrowID']) {
