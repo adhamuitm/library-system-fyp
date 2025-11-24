@@ -2,6 +2,7 @@
 session_start();
 require_once 'dbconnect.php';
 require_once 'auth_helper.php';
+require_once 'auto_calculate_fine_trigger.php';
 checkPageAccess(); // This prevents back button access after logout
 
 // Check if user is logged in and is a librarian
@@ -1088,13 +1089,7 @@ $res_stats = $res_stats_result->fetch_assoc();
 
         <div class="page-header">
     
-    <div style="display: flex; gap: 10px;">
-        <!-- NEW BUTTON -->
-        <a href="auto_calculate_fine.php" class="btn btn-warning" target="_blank" style="display: inline-flex; align-items: center; gap: 0.5rem;">
-            <i class="fas fa-calculator"></i> Calculate Fines Now
-        </a>
-        <!-- END NEW BUTTON -->
-    </div>
+    
 </div>
 
         <!-- Alert Messages -->
