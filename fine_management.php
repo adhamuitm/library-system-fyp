@@ -401,7 +401,7 @@ function generateReceiptContent($receiptData, $fineDetails, $logoData, $libraria
     <div class="footer-note">
         <strong>** PLEASE KEEP THIS RECEIPT AS PROOF OF PAYMENT **</strong><br><br>
         Thank you for your payment<br>
-        Library Management System - SK Saujana Impian 2
+        Library Management System - SMK Chendering
     </div>';
     
     return $html;
@@ -1261,7 +1261,7 @@ $fine_stats = $fine_stats_result->fetch_assoc();
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Fine Management - SK Saujana Impian 2 Library</title>
+    <title>Fine Management - SMK Chendering Library</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -2074,7 +2074,7 @@ $fine_stats = $fine_stats_result->fetch_assoc();
             </button>
             <div class="logo-container">
                 <div class="school-logo"></div>
-                <div class="logo-text">SK <span>Saujana Impian 2</span></div>
+                <div class="logo-text">SMK <span>Chendering</span></div>
             </div>
         </div>
         <div class="header-right">
@@ -2093,6 +2093,7 @@ $fine_stats = $fine_stats_result->fetch_assoc();
         </div>
     </header>
 
+    <!-- Sidebar Navigation -->
     <aside class="sidebar" id="sidebar">
         <nav class="sidebar-menu">
             <a href="librarian_dashboard.php" class="menu-item">
@@ -2107,7 +2108,7 @@ $fine_stats = $fine_stats_result->fetch_assoc();
                 <i class="fas fa-book"></i>
                 <span>Book Management</span>
             </a>
-            <a href="circulation_control.php" class="menu-item">
+            <a href="circulation_control.php" class="menu-item ">
                 <i class="fas fa-exchange-alt"></i>
                 <span>Circulation Control</span>
             </a>
@@ -2117,15 +2118,23 @@ $fine_stats = $fine_stats_result->fetch_assoc();
             </a>
             <a href="report_management.php" class="menu-item">
                 <i class="fas fa-chart-bar"></i>
-                <span>Reports</span>
+                <span>Reports & Analytics</span>
             </a>
             <a href="system_settings.php" class="menu-item">
                 <i class="fas fa-cog"></i>
-                <span>Settings</span>
+                <span>System Settings</span>
+            </a>
+            <a href="notifications.php" class="menu-item">
+                <i class="fas fa-bell"></i>
+                <span>Notifications</span>
+            </a>
+            <a href="profile.php" class="menu-item">
+                <i class="fas fa-user"></i>
+                <span>Profile</span>
             </a>
         </nav>
         <div class="sidebar-footer">
-            <p>SK Saujana Impian 2 <span>v1.0</span><br>Library Management System</p>
+            <p>SMK Chendering Library <span>v1.0</span><br>Library Management System</p>
         </div>
     </aside>
 
